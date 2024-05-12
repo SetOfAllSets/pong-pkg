@@ -1,7 +1,9 @@
+use serde::Deserialize;
+use std::fs::{self, read_dir, read_to_string, FileType};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::rc::Rc;
 use std::str;
-
 use clap::error::ErrorKind;
 use clap::{command, Parser};
 
@@ -9,7 +11,7 @@ use clap::{command, Parser};
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(short, long, default_value_t = false)]
-    add: bool,
+    install: bool,
     #[arg(short, long, default_value_t = false)]
     remove: bool,
     #[arg(short, long, default_value_t = false)]
@@ -20,73 +22,149 @@ struct Args {
     package: String,
 }
 
-fn validate_input(args: &Args) {
-    let mut cmd = command!();
+fn validate_input(args: &Args) -> Result<(), ErrorKind> {
     let mut count = 0;
-    for arg in [args.add, args.remove, args.select, args.deselect].iter() {
+    for arg in [args.install, args.remove, args.select, args.deselect].iter() {
         if *arg == true {
             count += 1;
         }
     }
-    let error_kind: ErrorKind;
     if count < 1 {
-        error_kind = ErrorKind::MissingRequiredArgument;
+        return Err(ErrorKind::MissingRequiredArgument);
     } else if count > 1 {
-        error_kind = ErrorKind::ArgumentConflict;
+        return Err(ErrorKind::ArgumentConflict);
     } else {
-        return;
+        return Ok(());
     }
-    cmd.error(
-        error_kind,
-        "Need at exactly one of --add, --remove, --select, or --deselect",
-    )
-    .exit();
-    //MissingRequiredArgument
-    //If this function exits then input has been validated
 }
 
-fn find_package(package: &String) -> Result<PathBuf, String> {
-    //TODO: actually search for the package
-    if package == "test-package" {
-        return Result::Ok(PathBuf::from("./e"));
-    }
-    Result::Err("E".to_string())
+fn find_package(package: &String) -> Result<Package, String> {
+    let repos = match read_dir(PathBuf::from("e")) {
+        Ok(iter) => iter,
+        Err(err) => return Err(err.to_string()),
+    };
+    for repo in repos {
+        let repo = match repo {
+            Ok(ok) => ok,
+            Err(err) => return Err(err.to_string()),
+        };
+        let config = match fs::read_to_string(repo.path().join(PathBuf::from("./Repo.toml"))) {
+            Ok(ok) => ok,
+            Err(err) => return Err(err.to_string()),
+        };
+    };
 }
 
-fn add(package: &String) {
-    println!("{}",str::from_utf8(std::process::Command::new("echo").arg(package).stdout(Stdio::piped()).spawn().unwrap().wait_with_output().unwrap().stdout.as_slice()).unwrap());
+/*
+let package = {
+    let mut package: Package = match toml::from_str(&contents) {
+        Ok(package) => package,
+        Err(err) => {
+            cmd.error(
+                ErrorKind::Io,
+                format!(
+                    "Unable to parse config file \"{}\" for package \"{}\" due to error \"{}\"",
+                    path.to_string_lossy(),
+                    args.package,
+                    err.to_string()
+                ),
+            )
+            .exit();
+        }
+    };
+    package.name = args.package;
+    package
+};
+*/
+
+#[derive(Deserialize)]
+struct Package {
+    //Ignore the config version for now, if the config fields change we'll use it then.
+    config_version: (u8, u8, u8),
+    package_version: (u8, u8, u8),
+    fetch: PathBuf,
+    install: PathBuf,
+    remove: PathBuf,
+    //Don't deserialize the name, we already have it so the config file doesn't need to
+    #[serde(skip_deserializing)]
+    name: String,
+    //Serde doesn't let this be a reference so we have to use Repo instead of &Repo. This should be changed if serde ever fixes this.
+    repo: Repo,
 }
 
-fn remove(package: &String) {
-    std::process::Command::new("echo").arg(package);
+#[derive(Deserialize)]
+struct Repo {
+    config_version: (u8,u8,u8),
+    repo_version: (u8,u8,u8),
+    fetch: PathBuf,
+    #[serde(skip_deserializing)]
+    name: String,
 }
 
-fn select(package: &String) {
-    std::process::Command::new("echo").arg(package);
+fn install(package: Package) {
+    print!(
+        "{}",
+        str::from_utf8(
+            std::process::Command::new("echo")
+                .arg(package.name)
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+                .wait_with_output()
+                .unwrap()
+                .stdout
+                .as_slice()
+        )
+        .unwrap()
+    );
 }
 
-fn deselect(package: &String) {
-    std::process::Command::new("echo").arg(package);
-}
+fn remove(package: Package) {}
+
+fn select(package: Package) {}
+
+fn deselect(package: Package) {}
 
 fn main() {
     let args = Args::parse();
-    validate_input(&args);
-    match find_package(&args.package) {
+    let mut cmd = command!();
+    match validate_input(&args) {
         Ok(_) => (),
-        Err(error_message) => {
-            let mut cmd = command!();
-            cmd.error(ErrorKind::InvalidValue, error_message).exit()
+        Err(err) => {
+            cmd.error(
+                err,
+                "Need at exactly one of --install, --remove, --select, or --deselect",
+            )
+            .exit();
         }
     }
-    if args.add {
-        add(&args.package);
+    let package = match find_package(&args.package) {
+        Ok(path) => path,
+        Err(error_message) => cmd.error(ErrorKind::InvalidValue, error_message).exit(),
+    };
+    let contents = match fs::read_to_string(&path.join(PathBuf::from("Package.toml"))) {
+        Ok(contents) => contents,
+        Err(err) => {
+            cmd.error(
+                ErrorKind::Io,
+                format!(
+                    "Unable to open config file \"{}\" for package \"{}\" due to error \"{}\"",
+                    path.to_string_lossy(),
+                    args.package,
+                    err.to_string()
+                ),
+            )
+            .exit();
+        }
+    };
+    if args.install {
+        install(package);
     } else if args.remove {
-        remove(&args.package);
+        remove(package);
     } else if args.select {
-        select(&args.package);
+        select(package);
     } else if args.deselect {
-        deselect(&args.package);
+        deselect(package);
     } else {
         panic!("Input passed validation but did not contain a valid verb. This is a bug.");
     }
