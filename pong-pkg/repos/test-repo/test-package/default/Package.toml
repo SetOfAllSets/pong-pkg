@@ -1,5 +1,5 @@
 config_version = [0,0,0]
 package_version = [1,2,3]
-fetch = "fetch.sh"
+fetch = "/bin/echo"
 install = "install.sh"
 remove = "remove.sh"
