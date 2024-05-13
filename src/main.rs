@@ -1,7 +1,7 @@
 use clap::{command, error::ErrorKind, Command, Parser};
 use pong_pkg::*;
 
-fn init() -> (Args, Command, Vec<Repo>){
+fn init() -> (Args, Command, Vec<Repo>) {
     let args = Args::parse();
     let mut cmd = command!();
     let repos = match get_repos() {
